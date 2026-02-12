@@ -1,7 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use oauth2::{
-    AuthUrl, AuthorizationCode, ClientId, ClientSecret, CsrfToken, PkceCodeChallenge,
+    AuthUrl, AuthorizationCode, ClientId, ClientSecret, CsrfToken,
     RedirectUrl, Scope, TokenResponse as OAuth2TokenResponse, TokenUrl,
 };
 use oauth2::basic::BasicClient;
@@ -91,7 +91,7 @@ async fn start_callback_server() {
     };
 
     if let Ok(request) = server.recv() {
-        let url = request.url();
+        let url = request.url().to_string();
         
         // Extract code from URL
         if let Some(code_start) = url.find("code=") {
@@ -101,6 +101,9 @@ async fn start_callback_server() {
             } else {
                 code_part
             };
+
+            // Store code for retrieval first
+            std::fs::write("/tmp/oauth_code.txt", code).ok();
 
             // Send success response to browser
             let html = r#"
@@ -118,9 +121,6 @@ async fn start_callback_server() {
             let _ = request.respond(Response::from_string(html).with_header(
                 tiny_http::Header::from_bytes(&b"Content-Type"[..], &b"text/html"[..]).unwrap()
             ));
-
-            // Store code for retrieval
-            std::fs::write("/tmp/oauth_code.txt", code).ok();
         }
     }
 }

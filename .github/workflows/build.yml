@@ -19,10 +19,10 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
         with:
-          node-version: 20
+          bun-version: latest
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
@@ -33,11 +33,11 @@ jobs:
           workspaces: './src-tauri -> target'
 
       - name: Install dependencies
-        run: npm install
+        run: bun install
 
       - name: Build the app (non-production)
         if: github.ref != 'refs/heads/production'
-        run: npm run tauri:build
+        run: bun run tauri:build
 
       - name: Get version from tauri.conf.json
         if: github.ref == 'refs/heads/production'
@@ -81,6 +81,7 @@ jobs:
             See commit history for changes.
           releaseDraft: false
           prerelease: false
+          args: --bunpm bun
 
       - name: Tag already exists
         if: github.ref == 'refs/heads/production' && steps.check_tag.outputs.exists == 'true'

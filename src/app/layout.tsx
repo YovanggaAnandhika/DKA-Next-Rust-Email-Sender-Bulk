@@ -1,7 +1,7 @@
 import './globals.css'
 
 export const metadata = {
-  title: 'DKA Email Sender AI Automatically Tools',
+  title: 'Email Sender AI Automatically Tools',
   description: 'Send emails with attachments',
 }
 

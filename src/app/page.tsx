@@ -9,6 +9,7 @@ interface EmailAccount {
   name: string
   email: string
   password: string
+  driveToken?: string
   isValid: boolean
 }
 
@@ -27,6 +28,7 @@ export default function Home() {
   const [newAccountName, setNewAccountName] = useState('')
   const [newAccountEmail, setNewAccountEmail] = useState('')
   const [newAccountPassword, setNewAccountPassword] = useState('')
+  const [newAccountDriveToken, setNewAccountDriveToken] = useState('')
   const [validating, setValidating] = useState(false)
 
   useEffect(() => {
@@ -77,12 +79,14 @@ export default function Home() {
           name: newAccountName || newAccountEmail,
           email: newAccountEmail,
           password: newAccountPassword,
+          driveToken: newAccountDriveToken || undefined,
           isValid: true,
         }
         saveAccounts([...accounts, newAccount])
         setNewAccountName('')
         setNewAccountEmail('')
         setNewAccountPassword('')
+        setNewAccountDriveToken('')
         alert('Account berhasil ditambahkan!')
       } else {
         alert('Validasi gagal: ' + response.message)
@@ -139,6 +143,7 @@ export default function Home() {
           smtp_username: account.email,
           smtp_password: account.password,
           attachment_path: attachmentPath,
+          google_drive_token: account.driveToken || null,
         },
       })
 
@@ -217,7 +222,7 @@ export default function Home() {
 
               <div>
                 <label style={{ display: 'block', marginBottom: '5px', fontWeight: '500' }}>Attachment (opsional):</label>
-                <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+                <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
                   <button
                     type="button"
                     onClick={handleFileSelect}
@@ -233,11 +238,31 @@ export default function Home() {
                     Pilih File
                   </button>
                   {attachmentPath && (
-                    <span style={{ fontSize: '14px', color: '#666' }}>
-                      {attachmentPath.split(/[\\/]/).pop()}
-                    </span>
+                    <>
+                      <span style={{ fontSize: '14px', color: '#666', flex: 1 }}>
+                        {attachmentPath.split(/[\\/]/).pop()}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setAttachmentPath(null)}
+                        style={{
+                          padding: '6px 12px',
+                          backgroundColor: '#dc3545',
+                          color: 'white',
+                          border: 'none',
+                          borderRadius: '5px',
+                          cursor: 'pointer',
+                          fontSize: '12px',
+                        }}
+                      >
+                        Hapus
+                      </button>
+                    </>
                   )}
                 </div>
+                <small style={{ display: 'block', marginTop: '5px', color: '#666' }}>
+                  File > 25 MB akan otomatis diupload ke Google Drive (perlu token)
+                </small>
               </div>
             </div>
 

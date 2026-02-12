@@ -5,6 +5,7 @@ use lettre::transport::smtp::authentication::Credentials;
 use lettre::{Message, SmtpTransport, Transport};
 use serde::{Deserialize, Serialize};
 use std::fs;
+use reqwest::multipart;
 
 #[derive(Deserialize)]
 struct EmailRequest {
@@ -14,6 +15,7 @@ struct EmailRequest {
     smtp_username: String,
     smtp_password: String,
     attachment_path: Option<String>,
+    google_drive_token: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -26,6 +28,72 @@ struct EmailResponse {
 struct ValidateResponse {
     success: bool,
     message: String,
+}
+
+#[derive(Deserialize)]
+struct DriveUploadResponse {
+    id: String,
+    #[serde(rename = "webViewLink")]
+    web_view_link: Option<String>,
+}
+
+async fn upload_to_drive(file_path: &str, token: &str) -> Result<String, String> {
+    let file_data = fs::read(file_path).map_err(|e| e.to_string())?;
+    let filename = std::path::Path::new(file_path)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("attachment")
+        .to_string();
+
+    let client = reqwest::Client::new();
+    
+    // Upload file
+    let form = multipart::Form::new()
+        .part("file", multipart::Part::bytes(file_data).file_name(filename.clone()));
+
+    let upload_response = client
+        .post("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart")
+        .bearer_auth(token)
+        .multipart(form)
+        .send()
+        .await
+        .map_err(|e| format!("Upload failed: {}", e))?;
+
+    if !upload_response.status().is_success() {
+        return Err(format!("Upload failed: {}", upload_response.status()));
+    }
+
+    let drive_response: DriveUploadResponse = upload_response
+        .json()
+        .await
+        .map_err(|e| format!("Parse response failed: {}", e))?;
+
+    // Make file public
+    let permission_body = serde_json::json!({
+        "role": "reader",
+        "type": "anyone"
+    });
+
+    client
+        .post(&format!("https://www.googleapis.com/drive/v3/files/{}/permissions", drive_response.id))
+        .bearer_auth(token)
+        .json(&permission_body)
+        .send()
+        .await
+        .map_err(|e| format!("Set permission failed: {}", e))?;
+
+    // Get shareable link
+    let file_info = client
+        .get(&format!("https://www.googleapis.com/drive/v3/files/{}?fields=webViewLink", drive_response.id))
+        .bearer_auth(token)
+        .send()
+        .await
+        .map_err(|e| format!("Get file info failed: {}", e))?
+        .json::<DriveUploadResponse>()
+        .await
+        .map_err(|e| format!("Parse file info failed: {}", e))?;
+
+    Ok(file_info.web_view_link.unwrap_or_else(|| format!("https://drive.google.com/file/d/{}/view", drive_response.id)))
 }
 
 #[tauri::command]
@@ -81,21 +149,66 @@ async fn send_emails(request: EmailRequest) -> Result<EmailResponse, String> {
         .credentials(creds)
         .build();
 
-    let attachment_data = if let Some(path) = &request.attachment_path {
-        match fs::read(path) {
-            Ok(data) => {
-                let filename = std::path::Path::new(path)
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("attachment")
-                    .to_string();
-                Some((filename, data))
+    let mut email_body = request.message.clone();
+    let mut attachment_data: Option<(String, Vec<u8>)> = None;
+
+    // Handle attachment
+    if let Some(path) = &request.attachment_path {
+        match std::fs::metadata(path) {
+            Ok(metadata) => {
+                let size_mb = metadata.len() as f64 / (1024.0 * 1024.0);
+                
+                if size_mb > 25.0 {
+                    // Upload to Google Drive
+                    if let Some(token) = &request.google_drive_token {
+                        match upload_to_drive(path, token).await {
+                            Ok(drive_link) => {
+                                email_body.push_str(&format!("\n\n---\nFile attachment ({}): {}", 
+                                    std::path::Path::new(path).file_name().and_then(|n| n.to_str()).unwrap_or("file"),
+                                    drive_link
+                                ));
+                            }
+                            Err(e) => {
+                                return Ok(EmailResponse {
+                                    success: false,
+                                    message: format!("Gagal upload ke Google Drive: {}", e),
+                                });
+                            }
+                        }
+                    } else {
+                        return Ok(EmailResponse {
+                            success: false,
+                            message: format!("File terlalu besar ({:.2} MB). Perlu Google Drive token untuk file > 25 MB.", size_mb),
+                        });
+                    }
+                } else {
+                    // Attach directly
+                    match fs::read(path) {
+                        Ok(data) => {
+                            let filename = std::path::Path::new(path)
+                                .file_name()
+                                .and_then(|n| n.to_str())
+                                .unwrap_or("attachment")
+                                .to_string();
+                            attachment_data = Some((filename, data));
+                        }
+                        Err(_) => {
+                            return Ok(EmailResponse {
+                                success: false,
+                                message: "Cannot read attachment file".to_string(),
+                            });
+                        }
+                    }
+                }
             }
-            Err(_) => None,
+            Err(_) => {
+                return Ok(EmailResponse {
+                    success: false,
+                    message: "Cannot read attachment file".to_string(),
+                });
+            }
         }
-    } else {
-        None
-    };
+    }
 
     let mut success_count = 0;
     let mut failed_count = 0;
@@ -115,13 +228,13 @@ async fn send_emails(request: EmailRequest) -> Result<EmailResponse, String> {
             email_builder
                 .multipart(
                     MultiPart::mixed()
-                        .singlepart(SinglePart::plain(request.message.clone()))
+                        .singlepart(SinglePart::plain(email_body.clone()))
                         .singlepart(attachment),
                 )
                 .map_err(|e| e.to_string())?
         } else {
             email_builder
-                .body(request.message.clone())
+                .body(email_body.clone())
                 .map_err(|e| e.to_string())?
         };
 

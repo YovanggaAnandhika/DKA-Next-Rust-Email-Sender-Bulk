@@ -1,14 +1,11 @@
-name: Build
+name: Build and Release
 
 on:
   push:
     branches:
       - main
       - master
-  pull_request:
-    branches:
-      - main
-      - master
+      - production
 
 jobs:
   build:
@@ -38,5 +35,56 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-      - name: Build the app
+      - name: Build the app (non-production)
+        if: github.ref != 'refs/heads/production'
         run: npm run tauri:build
+
+      - name: Get version from tauri.conf.json
+        if: github.ref == 'refs/heads/production'
+        id: version
+        shell: bash
+        run: |
+          VERSION=$(node -p "require('./src-tauri/tauri.conf.json').package.version")
+          echo "version=v$VERSION" >> $GITHUB_OUTPUT
+          echo "Version: v$VERSION"
+
+      - name: Check if tag exists
+        if: github.ref == 'refs/heads/production'
+        id: check_tag
+        shell: bash
+        run: |
+          if git rev-parse "${{ steps.version.outputs.version }}" >/dev/null 2>&1; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Build and Release (production)
+        if: github.ref == 'refs/heads/production' && steps.check_tag.outputs.exists == 'false'
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ steps.version.outputs.version }}
+          releaseName: 'DKA Email Sender ${{ steps.version.outputs.version }}'
+          releaseBody: |
+            ## Download
+            
+            Download installer atau portable executable di bawah ini.
+            
+            ### Windows
+            - `.msi` - Windows Installer (recommended)
+            - `.exe` - Portable executable
+            
+            ## Changelog
+            
+            See commit history for changes.
+          releaseDraft: false
+          prerelease: false
+
+      - name: Tag already exists
+        if: github.ref == 'refs/heads/production' && steps.check_tag.outputs.exists == 'true'
+        run: |
+          echo "Tag ${{ steps.version.outputs.version }} already exists. Skipping release."
+          echo "Please update version in src-tauri/tauri.conf.json"
+

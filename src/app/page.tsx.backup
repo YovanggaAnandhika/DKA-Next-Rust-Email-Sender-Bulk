@@ -3,14 +3,14 @@
 import { useState, FormEvent, useEffect } from 'react'
 import { invoke } from '@tauri-apps/api/tauri'
 import { open } from '@tauri-apps/api/dialog'
-import { listen } from '@tauri-apps/api/event'
 
-interface GoogleAccount {
+interface EmailAccount {
   id: string
+  name: string
   email: string
-  accessToken: string
-  refreshToken?: string
-  expiresAt: number
+  password: string
+  driveToken?: string
+  isValid: boolean
 }
 
 export default function Home() {
@@ -24,19 +24,24 @@ export default function Home() {
   const [responseMessage, setResponseMessage] = useState('')
 
   // Settings state
-  const [accounts, setAccounts] = useState<GoogleAccount[]>([])
-  const [connecting, setConnecting] = useState(false)
+  const [accounts, setAccounts] = useState<EmailAccount[]>([])
+  const [newAccountName, setNewAccountName] = useState('')
+  const [newAccountEmail, setNewAccountEmail] = useState('')
+  const [newAccountPassword, setNewAccountPassword] = useState('')
+  const [newAccountDriveToken, setNewAccountDriveToken] = useState('')
+  const [validating, setValidating] = useState(false)
 
   useEffect(() => {
-    const saved = localStorage.getItem('googleAccounts')
+    // Load accounts from localStorage
+    const saved = localStorage.getItem('emailAccounts')
     if (saved) {
       setAccounts(JSON.parse(saved))
     }
   }, [])
 
-  const saveAccounts = (newAccounts: GoogleAccount[]) => {
+  const saveAccounts = (newAccounts: EmailAccount[]) => {
     setAccounts(newAccounts)
-    localStorage.setItem('googleAccounts', JSON.stringify(newAccounts))
+    localStorage.setItem('emailAccounts', JSON.stringify(newAccounts))
   }
 
   const addEmailField = () => {
@@ -55,40 +60,41 @@ export default function Home() {
     setEmails(newEmails)
   }
 
-  const handleGoogleLogin = async () => {
-    setConnecting(true)
+  const validateAccount = async () => {
+    if (!newAccountEmail || !newAccountPassword) {
+      alert('Email dan password harus diisi')
+      return
+    }
+
+    setValidating(true)
     try {
-      const response: any = await invoke('start_oauth_flow')
-      
-      // Open browser for OAuth
-      window.open(response.auth_url, '_blank')
-      
-      // Wait for callback (user needs to paste the code)
-      const code = prompt('Paste the authorization code from the browser:')
-      
-      if (code) {
-        const tokenResponse: any = await invoke('exchange_code_for_token', { code })
-        
-        // Get user email from Google
-        const userInfo = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
-          headers: { Authorization: `Bearer ${tokenResponse.access_token}` }
-        }).then(r => r.json())
-        
-        const newAccount: GoogleAccount = {
+      const response: any = await invoke('validate_smtp', {
+        email: newAccountEmail,
+        password: newAccountPassword,
+      })
+
+      if (response.success) {
+        const newAccount: EmailAccount = {
           id: Date.now().toString(),
-          email: userInfo.email,
-          accessToken: tokenResponse.access_token,
-          refreshToken: tokenResponse.refresh_token,
-          expiresAt: Date.now() + (tokenResponse.expires_in * 1000),
+          name: newAccountName || newAccountEmail,
+          email: newAccountEmail,
+          password: newAccountPassword,
+          driveToken: newAccountDriveToken || undefined,
+          isValid: true,
         }
-        
         saveAccounts([...accounts, newAccount])
+        setNewAccountName('')
+        setNewAccountEmail('')
+        setNewAccountPassword('')
+        setNewAccountDriveToken('')
         alert('Account berhasil ditambahkan!')
+      } else {
+        alert('Validasi gagal: ' + response.message)
       }
     } catch (error) {
-      alert('Error: ' + error)
+      alert('Error validasi: ' + error)
     } finally {
-      setConnecting(false)
+      setValidating(false)
     }
   }
 
@@ -134,8 +140,10 @@ export default function Home() {
           title,
           message,
           emails: emailList,
-          access_token: account.accessToken,
+          smtp_username: account.email,
+          smtp_password: account.password,
           attachment_path: attachmentPath,
+          google_drive_token: account.driveToken || null,
         },
       })
 
@@ -149,7 +157,7 @@ export default function Home() {
 
   return (
     <main style={{ padding: '20px', maxWidth: '1200px', margin: '0 auto' }}>
-      <h1 style={{ marginBottom: '20px' }}>DKA Email Sender AI Automatically Tools</h1>
+      <h1 style={{ marginBottom: '20px' }}>Email Sender Automatically Tools</h1>
 
       {/* Tabs */}
       <div style={{ display: 'flex', gap: '10px', marginBottom: '20px', borderBottom: '2px solid #eee' }}>
@@ -187,7 +195,7 @@ export default function Home() {
       {activeTab === 'send' && (
         <form onSubmit={handleSubmit}>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
-            {/* Kolom Kiri */}
+            {/* Kolom Kiri - Email Content */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
               <div>
                 <label style={{ display: 'block', marginBottom: '5px', fontWeight: '500' }}>Subject:</label>
@@ -253,12 +261,12 @@ export default function Home() {
                   )}
                 </div>
                 <small style={{ display: 'block', marginTop: '5px', color: '#666' }}>
-                  File > 25 MB akan otomatis diupload ke Google Drive
+                  File &gt; 25 MB akan otomatis diupload ke Google Drive (perlu token)
                 </small>
               </div>
             </div>
 
-            {/* Kolom Kanan */}
+            {/* Kolom Kanan - Recipients & Account */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
               <div>
                 <label style={{ display: 'block', marginBottom: '5px', fontWeight: '500' }}>Pilih Account Pengirim:</label>
@@ -271,7 +279,7 @@ export default function Home() {
                   <option value="">-- Pilih Account --</option>
                   {accounts.map((acc) => (
                     <option key={acc.id} value={acc.id}>
-                      {acc.email}
+                      {acc.name} ({acc.email})
                     </option>
                   ))}
                 </select>
@@ -341,7 +349,7 @@ export default function Home() {
                   marginTop: '10px',
                 }}
               >
-                {loading ? 'Mengirim...' : accounts.length === 0 ? 'Login Google Dulu' : 'Kirim Email'}
+                {loading ? 'Mengirim...' : accounts.length === 0 ? 'Tambah Account Dulu' : 'Kirim Email'}
               </button>
             </div>
           </div>
@@ -365,36 +373,64 @@ export default function Home() {
       {/* Settings Tab */}
       {activeTab === 'settings' && (
         <div>
-          <div style={{ marginBottom: '30px', padding: '20px', backgroundColor: '#f9f9f9', borderRadius: '5px', textAlign: 'center' }}>
-            <h3 style={{ marginBottom: '15px' }}>Login dengan Google</h3>
-            <p style={{ marginBottom: '20px', color: '#666' }}>
-              Klik tombol di bawah untuk login dengan akun Google Anda.
-              <br />
-              Anda akan mendapatkan akses untuk mengirim email dan upload file ke Drive.
-            </p>
-            <button
-              onClick={handleGoogleLogin}
-              disabled={connecting}
-              style={{
-                padding: '12px 24px',
-                backgroundColor: connecting ? '#ccc' : '#4285f4',
-                color: 'white',
-                border: 'none',
-                borderRadius: '5px',
-                cursor: connecting ? 'not-allowed' : 'pointer',
-                fontWeight: '500',
-                fontSize: '16px',
-              }}
-            >
-              {connecting ? 'Connecting...' : '🔐 Login with Google'}
-            </button>
+          <div style={{ marginBottom: '30px', padding: '20px', backgroundColor: '#f9f9f9', borderRadius: '5px' }}>
+            <h3 style={{ marginBottom: '15px' }}>Tambah Account Baru</h3>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
+              <div>
+                <label style={{ display: 'block', marginBottom: '5px', fontWeight: '500' }}>Nama Account (opsional):</label>
+                <input
+                  type="text"
+                  value={newAccountName}
+                  onChange={(e) => setNewAccountName(e.target.value)}
+                  placeholder="Contoh: Account Kantor"
+                  style={{ width: '100%', padding: '8px', border: '1px solid #ddd', borderRadius: '5px' }}
+                />
+              </div>
+              <div>
+                <label style={{ display: 'block', marginBottom: '5px', fontWeight: '500' }}>Gmail Email:</label>
+                <input
+                  type="email"
+                  value={newAccountEmail}
+                  onChange={(e) => setNewAccountEmail(e.target.value)}
+                  placeholder="your-email@gmail.com"
+                  required
+                  style={{ width: '100%', padding: '8px', border: '1px solid #ddd', borderRadius: '5px' }}
+                />
+              </div>
+              <div>
+                <label style={{ display: 'block', marginBottom: '5px', fontWeight: '500' }}>Gmail App Password:</label>
+                <input
+                  type="password"
+                  value={newAccountPassword}
+                  onChange={(e) => setNewAccountPassword(e.target.value)}
+                  placeholder="App Password (16 karakter)"
+                  required
+                  style={{ width: '100%', padding: '8px', border: '1px solid #ddd', borderRadius: '5px' }}
+                />
+              </div>
+              <button
+                onClick={validateAccount}
+                disabled={validating}
+                style={{
+                  padding: '10px',
+                  backgroundColor: validating ? '#ccc' : '#0070f3',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '5px',
+                  cursor: validating ? 'not-allowed' : 'pointer',
+                  fontWeight: '500',
+                }}
+              >
+                {validating ? 'Memvalidasi...' : 'Validasi & Tambah Account'}
+              </button>
+            </div>
           </div>
 
           <div>
             <h3 style={{ marginBottom: '15px' }}>Daftar Account</h3>
             {accounts.length === 0 ? (
               <p style={{ color: '#666', textAlign: 'center', padding: '20px' }}>
-                Belum ada account. Login dengan Google di atas.
+                Belum ada account. Tambahkan account baru di atas.
               </p>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
@@ -412,9 +448,10 @@ export default function Home() {
                     }}
                   >
                     <div>
-                      <div style={{ fontWeight: '500', marginBottom: '5px' }}>{acc.email}</div>
-                      <div style={{ fontSize: '12px', color: '#28a745' }}>
-                        ✓ Connected
+                      <div style={{ fontWeight: '500', marginBottom: '5px' }}>{acc.name}</div>
+                      <div style={{ fontSize: '14px', color: '#666' }}>{acc.email}</div>
+                      <div style={{ fontSize: '12px', color: acc.isValid ? '#28a745' : '#dc3545', marginTop: '5px' }}>
+                        {acc.isValid ? '✓ Valid' : '✗ Invalid'}
                       </div>
                     </div>
                     <button
@@ -437,13 +474,14 @@ export default function Home() {
           </div>
 
           <div style={{ marginTop: '30px', fontSize: '13px', color: '#666', backgroundColor: '#f9f9f9', padding: '15px', borderRadius: '5px' }}>
-            <p style={{ fontWeight: '500', marginBottom: '8px' }}>Keuntungan Login dengan Google:</p>
-            <ul style={{ marginLeft: '20px', lineHeight: '1.6' }}>
-              <li>Tidak perlu App Password</li>
-              <li>Lebih aman dengan OAuth2</li>
-              <li>Support file besar (auto upload ke Drive)</li>
-              <li>Bisa revoke akses kapan saja dari Google Account</li>
-            </ul>
+            <p style={{ fontWeight: '500', marginBottom: '8px' }}>Cara membuat Gmail App Password:</p>
+            <ol style={{ marginLeft: '20px', lineHeight: '1.6' }}>
+              <li>Buka Google Account → Security</li>
+              <li>Aktifkan 2-Step Verification</li>
+              <li>Buka App passwords</li>
+              <li>Generate password baru untuk "Mail"</li>
+              <li>Copy password 16 karakter dan paste di form</li>
+            </ol>
           </div>
         </div>
       )}

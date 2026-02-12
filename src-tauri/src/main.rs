@@ -64,19 +64,78 @@ async fn start_oauth_flow() -> Result<OAuthUrlResponse, String> {
     )
     .set_redirect_uri(RedirectUrl::new(REDIRECT_URI.to_string()).map_err(|e| e.to_string())?);
 
-    let (pkce_challenge, _pkce_verifier) = PkceCodeChallenge::new_random_sha256();
-
     let (auth_url, csrf_token) = client
         .authorize_url(CsrfToken::new_random)
         .add_scope(Scope::new("https://www.googleapis.com/auth/gmail.send".to_string()))
         .add_scope(Scope::new("https://www.googleapis.com/auth/drive.file".to_string()))
-        .set_pkce_challenge(pkce_challenge)
+        .add_scope(Scope::new("https://www.googleapis.com/auth/userinfo.email".to_string()))
         .url();
+
+    // Start local server to listen for callback
+    tokio::spawn(async move {
+        start_callback_server().await;
+    });
 
     Ok(OAuthUrlResponse {
         auth_url: auth_url.to_string(),
         csrf_token: csrf_token.secret().clone(),
     })
+}
+
+async fn start_callback_server() {
+    use tiny_http::{Server, Response};
+    
+    let server = match Server::http("127.0.0.1:8888") {
+        Ok(s) => s,
+        Err(_) => return,
+    };
+
+    if let Ok(request) = server.recv() {
+        let url = request.url();
+        
+        // Extract code from URL
+        if let Some(code_start) = url.find("code=") {
+            let code_part = &url[code_start + 5..];
+            let code = if let Some(amp_pos) = code_part.find('&') {
+                &code_part[..amp_pos]
+            } else {
+                code_part
+            };
+
+            // Send success response to browser
+            let html = r#"
+                <!DOCTYPE html>
+                <html>
+                <head><title>Success</title></head>
+                <body style="font-family: Arial; text-align: center; padding: 50px;">
+                    <h1>✓ Login Berhasil!</h1>
+                    <p>Anda bisa menutup tab ini dan kembali ke aplikasi.</p>
+                    <script>window.close();</script>
+                </body>
+                </html>
+            "#;
+            
+            let _ = request.respond(Response::from_string(html).with_header(
+                tiny_http::Header::from_bytes(&b"Content-Type"[..], &b"text/html"[..]).unwrap()
+            ));
+
+            // Store code for retrieval
+            std::fs::write("/tmp/oauth_code.txt", code).ok();
+        }
+    }
+}
+
+#[tauri::command]
+async fn get_oauth_code() -> Result<String, String> {
+    // Wait for code file to exist (max 60 seconds)
+    for _ in 0..60 {
+        if let Ok(code) = std::fs::read_to_string("/tmp/oauth_code.txt") {
+            std::fs::remove_file("/tmp/oauth_code.txt").ok();
+            return Ok(code);
+        }
+        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+    }
+    Err("Timeout waiting for authorization".to_string())
 }
 
 #[tauri::command]
@@ -276,6 +335,7 @@ fn main() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
             start_oauth_flow,
+            get_oauth_code,
             exchange_code_for_token,
             send_emails
         ])

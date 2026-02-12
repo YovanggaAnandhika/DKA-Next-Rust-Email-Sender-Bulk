@@ -61,10 +61,10 @@ export default function Home() {
       const response: any = await invoke('start_oauth_flow')
       
       // Open browser for OAuth
-      window.open(response.auth_url, '_blank')
+      window.open(response.auth_url, '_blank', 'width=600,height=700')
       
-      // Wait for callback (user needs to paste the code)
-      const code = prompt('Paste the authorization code from the browser:')
+      // Wait for callback (automatic)
+      const code: any = await invoke('get_oauth_code')
       
       if (code) {
         const tokenResponse: any = await invoke('exchange_code_for_token', { code })

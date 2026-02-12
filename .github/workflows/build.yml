@@ -81,7 +81,6 @@ jobs:
             See commit history for changes.
           releaseDraft: false
           prerelease: false
-          args: --bunpm bun
 
       - name: Tag already exists
         if: github.ref == 'refs/heads/production' && steps.check_tag.outputs.exists == 'true'

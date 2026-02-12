@@ -3,6 +3,10 @@ name = "email-sender"
 version = "0.1.0"
 edition = "2021"
 
+[[bin]]
+name = "email-sender"
+path = "src/main.rs"
+
 [build-dependencies]
 tauri-build = { version = "1.5", features = [] }
 

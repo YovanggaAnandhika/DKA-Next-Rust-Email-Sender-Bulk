@@ -2,7 +2,7 @@
 
 use oauth2::{
     AuthUrl, AuthorizationCode, ClientId, ClientSecret, CsrfToken, PkceCodeChallenge,
-    RedirectUrl, Scope, TokenResponse, TokenUrl,
+    RedirectUrl, Scope, TokenResponse as OAuth2TokenResponse, TokenUrl,
 };
 use oauth2::basic::BasicClient;
 use oauth2::reqwest::async_http_client;
@@ -37,7 +37,7 @@ struct OAuthUrlResponse {
 }
 
 #[derive(Serialize)]
-struct TokenResponse {
+struct TokenData {
     access_token: String,
     refresh_token: Option<String>,
     expires_in: i64,
@@ -80,7 +80,7 @@ async fn start_oauth_flow() -> Result<OAuthUrlResponse, String> {
 }
 
 #[tauri::command]
-async fn exchange_code_for_token(code: String) -> Result<TokenResponse, String> {
+async fn exchange_code_for_token(code: String) -> Result<TokenData, String> {
     let client = BasicClient::new(
         ClientId::new(GOOGLE_CLIENT_ID.to_string()),
         Some(ClientSecret::new(GOOGLE_CLIENT_SECRET.to_string())),
@@ -99,7 +99,7 @@ async fn exchange_code_for_token(code: String) -> Result<TokenResponse, String> 
         .await
         .map_err(|e| format!("Token exchange failed: {}", e))?;
 
-    Ok(TokenResponse {
+    Ok(TokenData {
         access_token: token_result.access_token().secret().clone(),
         refresh_token: token_result.refresh_token().map(|t| t.secret().clone()),
         expires_in: token_result.expires_in().map(|d| d.as_secs() as i64).unwrap_or(3600),

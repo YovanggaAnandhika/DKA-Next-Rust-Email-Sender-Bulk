@@ -9,6 +9,8 @@ on:
 
 jobs:
   build:
+    permissions:
+      contents: write
     strategy:
       fail-fast: false
       matrix:
@@ -53,14 +55,36 @@ jobs:
         id: check_tag
         shell: bash
         run: |
+          git fetch --tags
           if git rev-parse "${{ steps.version.outputs.version }}" >/dev/null 2>&1; then
             echo "exists=true" >> $GITHUB_OUTPUT
+            echo "Tag exists, will delete and recreate"
           else
             echo "exists=false" >> $GITHUB_OUTPUT
           fi
 
+      - name: Delete existing tag and release
+        if: github.ref == 'refs/heads/production' && steps.check_tag.outputs.exists == 'true'
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Delete remote tag
+          git push --delete origin ${{ steps.version.outputs.version }} || true
+          
+          # Delete release using GitHub API
+          RELEASE_ID=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
+            "https://api.github.com/repos/${{ github.repository }}/releases/tags/${{ steps.version.outputs.version }}" \
+            | jq -r '.id')
+          
+          if [ "$RELEASE_ID" != "null" ] && [ -n "$RELEASE_ID" ]; then
+            curl -X DELETE -H "Authorization: token $GITHUB_TOKEN" \
+              "https://api.github.com/repos/${{ github.repository }}/releases/$RELEASE_ID"
+            echo "Deleted existing release"
+          fi
+
       - name: Build and Release (production)
-        if: github.ref == 'refs/heads/production' && steps.check_tag.outputs.exists == 'false'
+        if: github.ref == 'refs/heads/production'
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -74,17 +98,11 @@ jobs:
             
             ### Windows
             - `.msi` - Windows Installer (recommended)
-            - `.exe` - Portable executable
+            - `.exe` - NSIS Installer
             
             ## Changelog
             
             See commit history for changes.
           releaseDraft: false
           prerelease: false
-
-      - name: Tag already exists
-        if: github.ref == 'refs/heads/production' && steps.check_tag.outputs.exists == 'true'
-        run: |
-          echo "Tag ${{ steps.version.outputs.version }} already exists. Skipping release."
-          echo "Please update version in src-tauri/tauri.conf.json"
 

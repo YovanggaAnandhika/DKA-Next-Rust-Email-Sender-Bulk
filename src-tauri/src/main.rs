@@ -104,14 +104,7 @@ async fn validate_smtp(email: String, password: String) -> Result<ValidateRespon
         Ok(transport) => {
             let mailer = transport.credentials(creds).build();
             
-            // Test connection by trying to send to self (won't actually send)
-            let test_email = Message::builder()
-                .from(email.parse().map_err(|e| format!("{:?}", e))?)
-                .to(email.parse().map_err(|e| format!("{:?}", e))?)
-                .subject("Test")
-                .body("Test".to_string())
-                .map_err(|e| e.to_string())?;
-            
+            // Test connection
             match mailer.test_connection() {
                 Ok(true) => Ok(ValidateResponse {
                     success: true,
